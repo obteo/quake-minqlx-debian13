@@ -1,14 +1,18 @@
-name: Build and publish Docker image
+name: Publish Docker image
+
 on:
   push:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+
 permissions:
   contents: read
   packages: write
+
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +27,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=2.0-test,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=2.0-test,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=ref,event=tag
       - uses: docker/build-push-action@v6
         with:
@@ -32,3 +36,22 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  promote-stable:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'Promote tested Debian 13 image to stable'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote exact tested image without rebuilding
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ github.repository }}:2.0.0" \
+            --tag "ghcr.io/${{ github.repository }}:latest" \
+            "ghcr.io/${{ github.repository }}:2.0-test"
+      - name: Inspect stable image
+        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:latest"
